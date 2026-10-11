@@ -92,9 +92,9 @@ h1{color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.6)}
 
 <div id="wajah" hidden>
 <div class="card"><div class="mut">Absen pakai wajah berjalan di HP ini. Foto tidak dikirim ke mana-mana: hanya angka ciri wajah yang disimpan di browser. Perlu internet saat pertama memuat model. Buka lewat https dan izinkan kamera.</div>
-<div class="bar"><button class="btn" id="muat">Siapkan kamera dan model</button><button class="btn g" id="tes">Tes koneksi</button></div><div class="mut" id="wst"></div><video id="vid" playsinline muted autoplay></video></div>
-<div class="card"><b>Absen wajah</b><div class="mut">Murid menghadap kamera, lalu kedip sekali (supaya foto tidak bisa dipakai curang).</div>
-<div class="bar"><button class="btn" id="mulaiW">Mulai absen wajah</button><button class="btn g" id="stopW">Berhenti</button></div><div id="wlog" class="mut"></div></div>
+<div class="bar"><button class="btn" id="muat">Siapkan kamera dan model</button><button class="btn g" id="tes">Tes koneksi</button></div><div class="mut" id="wst"></div><div class="mut" style="font-size:12px">Versi fitur wajah: 4 (putar kepala)</div><video id="vid" playsinline muted autoplay></video></div>
+<div class="card"><b>Absen wajah</b><div class="mut">Murid menghadap kamera, lalu putar kepala pelan ke kiri dan kanan (supaya foto tidak bisa dipakai curang).</div>
+<label class="mut" style="display:block;margin:6px 0"><input type="checkbox" id="wkedip" checked style="width:auto"> Wajib putar kepala (anti foto)</label><div class="bar"><button class="btn" id="mulaiW">Mulai absen wajah</button><button class="btn g" id="stopW">Berhenti</button></div><div id="wlog" class="mut"></div></div>
 <div class="card"><b>Daftarkan wajah murid</b>
 <label class="mut" style="display:block;margin:8px 0"><input type="checkbox" id="izin" style="width:auto"> Sudah ada izin sekolah/orang tua untuk menyimpan data wajah murid</label>
 <select id="wsel"></select><div class="bar"><button class="btn" id="daftarW">Rekam video pendaftaran (±8 detik)</button><button class="btn g" id="hapusW">Hapus wajah murid ini</button></div><div id="wdaftar" class="mut"></div></div></div>
@@ -346,8 +346,8 @@ $('daftarW').onclick=async function(){
   if(got.length<5){wmsg('Rekaman kurang jelas ('+got.length+' sampel). Cari tempat lebih terang lalu coba lagi.');return}
   db.wajah=db.wajah||{};db.wajah[n]=got;save();wdaft();wmsg('✅ Wajah '+n+' terdaftar dari video ('+got.length+' sampel).')};
 $('hapusW').onclick=function(){var n=$('wsel').value;if(db.wajah&&db.wajah[n]){delete db.wajah[n];save();wdaft();wmsg('Data wajah '+n+' dihapus.')}};
-var earHist=[],lastDesc=0,aktif=false;
-function cekKedip(det){var e=(ear(det.landmarks.getLeftEye())+ear(det.landmarks.getRightEye()))/2,n=Date.now();earHist.push({t:n,e:e});earHist=earHist.filter(function(x){return n-x.t<4000});var mx=0;earHist.forEach(function(x){if(x.e>mx)mx=x.e});if(mx>0.2&&e<mx*0.78)blinkAt=n}
+var earHist=[],lastDesc=0,aktif=false,dbgE=0,dbgM=0;
+function cekKedip(det){var p=det.landmarks.positions,w=p[16].x-p[0].x,r=w>0?(p[30].x-p[0].x)/w:0.5,n=Date.now();earHist.push({t:n,e:r});earHist=earHist.filter(function(x){return n-x.t<5000});var lo=9,hi=-9;earHist.forEach(function(x){if(x.e<lo)lo=x.e;if(x.e>hi)hi=x.e});dbgE=lo;dbgM=hi;if(lo<0.43&&hi>0.57)blinkAt=n}
 function tidur(ms){return new Promise(function(r){setTimeout(r,ms)})}
 async function loopW(){
   while(aktif){
@@ -362,9 +362,9 @@ async function loopW(){
       var m=cocok(det.descriptor);
       if(m.d>=0.5){cand={n:'',c:0};wmsg('Wajah belum dikenali.');continue}
       if(cand.n===m.n)cand.c++;else cand={n:m.n,c:1};
-      if(cand.c<2){wmsg('Mengenali '+m.n+'… (kedip '+(Date.now()-blinkAt<6000?'✔':'belum')+')');continue}
-      if(Date.now()-blinkAt>6000){wmsg(m.n+': kedipkan mata sekali.');continue}
-      catatW(m.n);cand={n:'',c:0};blinkAt=0;await tidur(1500);
+      if(cand.c<2){wmsg('Mengenali '+m.n+'… (putar kepala '+(Date.now()-blinkAt<6000?'✔':'belum')+') ['+dbgE.toFixed(2)+'/'+dbgM.toFixed(2)+']');continue}
+      if($('wkedip').checked&&Date.now()-blinkAt>6000){wmsg(m.n+': putar kepala pelan ke kiri lalu kanan. ['+dbgE.toFixed(2)+'/'+dbgM.toFixed(2)+']');continue}
+      catatW(m.n);cand={n:'',c:0};blinkAt=0;earHist=[];await tidur(1500);
     }catch(e){wmsg('Error: '+((e&&e.message)||e));await tidur(500)}
   }
 }
@@ -372,7 +372,7 @@ $('mulaiW').onclick=async function(){
   if(!Object.keys(db.wajah||{}).length){wmsg('Belum ada wajah murid yang didaftarkan.');return}
   if(!(await siapW()))return;
   aktif=false;await tidur(300);cand={n:'',c:0};blinkAt=0;earHist=[];lastDesc=0;aktif=true;
-  wmsg('Absen wajah aktif. Hadap kamera dan kedip sekali.');loopW();
+  wmsg('Absen wajah aktif. Hadap kamera, lalu putar kepala pelan ke kiri dan kanan.');loopW();
 };
 absen();
 </script></body></html>
