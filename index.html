@@ -317,10 +317,9 @@ async function siapW(){
     wmsg('Kamera siap.');return true;
   }catch(e){wmsg('Gagal: '+(e.message||e)+'. Cek izin kamera dan koneksi internet.');return false}
 }
-function stopCam(){if(loop){clearInterval(loop);loop=null}if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null;$('vid').srcObject=null}}
+function stopCam(){aktif=false;if(loop){clearInterval(loop);loop=null}if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null;$('vid').srcObject=null}}
 async function deteksi(){return await faceapi.detectSingleFace($('vid'),new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.5})).withFaceLandmarks().withFaceDescriptor()}
 function ear(p){function d(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}return (d(p[1],p[5])+d(p[2],p[4]))/(2*d(p[0],p[3]))}
-function cekKedip(det){var e=(ear(det.landmarks.getLeftEye())+ear(det.landmarks.getRightEye()))/2;if(e<0.2){tutup=true}else if(tutup&&e>0.24){blinkAt=Date.now();tutup=false}}
 function cocok(desc){var best={n:'',d:9};Object.keys(db.wajah||{}).forEach(function(n){db.wajah[n].forEach(function(s){var d=0;for(var i=0;i<128;i++){var x=s[i]-desc[i];d+=x*x}d=Math.sqrt(d);if(d<best.d)best={n:n,d:d}})});return best}
 function wlog(){var j=(db.jam&&db.jam[today])||{},k=Object.keys(j);$('wlog').textContent=k.length?'Tercatat lewat wajah hari ini: '+k.map(function(n){return n+' ('+j[n]+')'}).join(', '):'Belum ada yang absen lewat wajah hari ini.'}
 function catatW(n){var r=db.data[today]||(db.data[today]={}),jam=new Date().toTimeString().slice(0,5);
@@ -332,7 +331,7 @@ function isiW(){$('wsel').innerHTML=db.siswa.map(function(n){return '<option>'+e
 function wdaft(){var n=$('wsel').value,k=(db.wajah&&db.wajah[n]||[]).length;$('wdaftar').textContent=db.siswa.length?(n+': '+k+' sampel wajah. Terdaftar: '+Object.keys(db.wajah||{}).length+' dari '+db.siswa.length+' murid.'):'Tambah murid dulu di tab Murid.'}
 $('wsel').onchange=wdaft;
 $('muat').onclick=function(){siapW()};
-$('stopW').onclick=function(){if(loop){clearInterval(loop);loop=null}wmsg('Absen wajah dihentikan.')};
+$('stopW').onclick=function(){aktif=false;if(loop){clearInterval(loop);loop=null}wmsg('Absen wajah dihentikan.')};
 $('daftarW').onclick=async function(){
   var n=$('wsel').value;if(!n){wmsg('Pilih murid dulu.');return}
   if(!$('izin').checked){wmsg('Centang dulu pernyataan izin sekolah/orang tua.');return}
@@ -347,24 +346,33 @@ $('daftarW').onclick=async function(){
   if(got.length<5){wmsg('Rekaman kurang jelas ('+got.length+' sampel). Cari tempat lebih terang lalu coba lagi.');return}
   db.wajah=db.wajah||{};db.wajah[n]=got;save();wdaft();wmsg('✅ Wajah '+n+' terdaftar dari video ('+got.length+' sampel).')};
 $('hapusW').onclick=function(){var n=$('wsel').value;if(db.wajah&&db.wajah[n]){delete db.wajah[n];save();wdaft();wmsg('Data wajah '+n+' dihapus.')}};
+var earHist=[],lastDesc=0,aktif=false;
+function cekKedip(det){var e=(ear(det.landmarks.getLeftEye())+ear(det.landmarks.getRightEye()))/2,n=Date.now();earHist.push({t:n,e:e});earHist=earHist.filter(function(x){return n-x.t<4000});var mx=0;earHist.forEach(function(x){if(x.e>mx)mx=x.e});if(mx>0.2&&e<mx*0.78)blinkAt=n}
+function tidur(ms){return new Promise(function(r){setTimeout(r,ms)})}
+async function loopW(){
+  while(aktif){
+    try{
+      var need=Date.now()-lastDesc>700;
+      var q=faceapi.detectSingleFace($('vid'),new faceapi.TinyFaceDetectorOptions({inputSize:need?320:224,scoreThreshold:0.5})).withFaceLandmarks();
+      var det=await (need?q.withFaceDescriptor():q);
+      if(!det){cand={n:'',c:0};wmsg('Wajah tidak terlihat…');await tidur(200);continue}
+      cekKedip(det);
+      if(!need||!det.descriptor){await tidur(30);continue}
+      lastDesc=Date.now();
+      var m=cocok(det.descriptor);
+      if(m.d>=0.5){cand={n:'',c:0};wmsg('Wajah belum dikenali.');continue}
+      if(cand.n===m.n)cand.c++;else cand={n:m.n,c:1};
+      if(cand.c<2){wmsg('Mengenali '+m.n+'… (kedip '+(Date.now()-blinkAt<6000?'✔':'belum')+')');continue}
+      if(Date.now()-blinkAt>6000){wmsg(m.n+': kedipkan mata sekali.');continue}
+      catatW(m.n);cand={n:'',c:0};blinkAt=0;await tidur(1500);
+    }catch(e){wmsg('Error: '+((e&&e.message)||e));await tidur(500)}
+  }
+}
 $('mulaiW').onclick=async function(){
   if(!Object.keys(db.wajah||{}).length){wmsg('Belum ada wajah murid yang didaftarkan.');return}
   if(!(await siapW()))return;
-  if(loop)clearInterval(loop);cand={n:'',c:0};blinkAt=0;
-  wmsg('Absen wajah aktif. Hadap kamera dan kedip sekali.');
-  loop=setInterval(async function(){
-    if(sibuk)return;sibuk=true;
-    try{
-      var det=await deteksi();
-      if(!det){cand={n:'',c:0};wmsg('Wajah tidak terlihat…');return}
-      cekKedip(det);
-      var m=cocok(det.descriptor);
-      if(m.d>=0.5){cand={n:'',c:0};wmsg('Wajah belum dikenali.');return}
-      if(cand.n===m.n)cand.c++;else cand={n:m.n,c:1};
-      if(cand.c<3){wmsg('Mengenali '+m.n+'…');return}
-      if(Date.now()-blinkAt>5000){wmsg(m.n+': kedipkan mata sekali untuk memastikan.');return}
-      catatW(m.n);cand={n:'',c:0};blinkAt=0;
-    }catch(e){wmsg('Error: '+(e.message||e))}finally{sibuk=false}
-  },600)};
+  aktif=false;await tidur(300);cand={n:'',c:0};blinkAt=0;earHist=[];lastDesc=0;aktif=true;
+  wmsg('Absen wajah aktif. Hadap kamera dan kedip sekali.');loopW();
+};
 absen();
 </script></body></html>
